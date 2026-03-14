@@ -6,7 +6,7 @@ _Learn about the person you're helping. Update this as you go._
 - **What to call them:** Mike
 - **Pronouns:**
 - **Timezone:** America/Detroit
-- **Notes:**
+- **Notes:** Prefers concise replies; wants a mix of proactive help and wait-to-be-asked behavior; wants opinions grounded in past data or experience.
 
 ## Context
 
