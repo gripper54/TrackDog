@@ -621,7 +621,7 @@ app.post('/api/entries', requireAuth, async (req, res) => {
     return res.status(201).json(serializeEntry(row))
   } catch (error) {
     console.error(error)
-    return res.status(500).json({ error: 'Failed to save entry' })
+    return res.status(500).json({ error: error?.message || 'Failed to save entry' })
   }
 })
 
@@ -648,7 +648,7 @@ app.put('/api/entries/:id', requireAuth, async (req, res) => {
     return res.json(serializeEntry(row))
   } catch (error) {
     console.error(error)
-    return res.status(500).json({ error: 'Failed to update entry' })
+    return res.status(500).json({ error: error?.message || 'Failed to update entry' })
   }
 })
 
@@ -692,7 +692,7 @@ app.post('/api/mass-entry/save', requireAuth, async (req, res) => {
     return res.status(201).json({ ok: true, count: result.entries.length, entries: result.entries })
   } catch (error) {
     console.error(error)
-    return res.status(500).json({ error: 'Failed to save mass entry batch' })
+    return res.status(500).json({ error: error?.message || 'Failed to save mass entry batch' })
   }
 })
 
@@ -719,7 +719,7 @@ app.post('/api/mass-entry/mixed/save', requireAuth, async (req, res) => {
     return res.status(201).json({ ok: true, count: result.entries.length, linesParsed: result.linesParsed, warnings: result.warnings, entries: result.entries })
   } catch (error) {
     console.error(error)
-    return res.status(500).json({ error: 'Failed to save mixed mass entry batch' })
+    return res.status(500).json({ error: error?.message || 'Failed to save mixed mass entry batch' })
   }
 })
 
