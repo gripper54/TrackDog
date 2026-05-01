@@ -68,6 +68,7 @@ Trackdog is now prepared for:
 - GitHub baseline cleanup
 - environment-based API configuration
 - initial Supabase auth integration
+- backend API token enforcement
 - Vercel deployment prep
 
 Trackdog is not yet fully online because it still needs:
@@ -75,9 +76,25 @@ Trackdog is not yet fully online because it still needs:
 - production deployment wiring
 - per-user or role-based backend/data authorization strategy
 
+## Deployment notes
+For a hosted deployment, this app currently has two parts:
+- Vite frontend
+- Node/Express backend with a local SQLite database
+
+Important constraint:
+- Vercel is fine for the frontend, but the current backend and SQLite storage are not a good long-term fit for Vercel serverless hosting as-is.
+- For a real hosted setup, plan to move data storage to Supabase/Postgres and either move the API into hosted functions carefully or run it on a persistent Node host.
+
+Minimum hosted env vars:
+- `VITE_API_BASE_URL`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `TRACKDOG_RECORDS_FOLDER` if PDF saving remains filesystem-based on the backend host
+- `PORT` for non-serverless backend hosting
+
 ## Next implementation phases
-1. GitHub source-of-truth setup
-2. Vercel deployment
-3. SQLite to Supabase/Postgres migration
+1. choose deployment shape: Vercel frontend + separate API host, or full migration first
+2. SQLite to Supabase/Postgres migration
+3. move PDF/archive storage off local filesystem if hosting remotely
 4. per-user or role-based authorization strategy
 5. production hardening
