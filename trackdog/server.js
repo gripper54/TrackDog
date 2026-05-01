@@ -1,5 +1,4 @@
 import cors from 'cors'
-import Database from 'better-sqlite3'
 import express from 'express'
 import fs from 'fs'
 import path from 'path'
@@ -9,70 +8,130 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const db = new Database(path.join(__dirname, 'trackdog.db'))
 const app = express()
 const port = process.env.PORT || 3001
 const recordsFolder = process.env.TRACKDOG_RECORDS_FOLDER || '/Users/crimmit/Library/CloudStorage/Dropbox/Trackdog Records'
 const supabaseUrl = process.env.VITE_SUPABASE_URL
 const supabasePublishableKey = process.env.VITE_SUPABASE_ANON_KEY
 const supabase = supabaseUrl && supabasePublishableKey ? createClient(supabaseUrl, supabasePublishableKey) : null
+if (!supabase) {
+  throw new Error('Supabase is required for the Trackdog API in hosted mode. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
+}
 
 const workers = ['Mark Griffin', 'Mike Griffin']
 const defaultCustomer = 'White Oaks / Prime Properties'
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    worker TEXT NOT NULL,
-    customer TEXT DEFAULT '',
-    property TEXT DEFAULT '',
-    service_name TEXT DEFAULT '',
-    hours REAL NOT NULL DEFAULT 0,
-    entry_type TEXT NOT NULL DEFAULT 'hourly',
-    rate REAL NOT NULL DEFAULT 30,
-    amount REAL NOT NULL DEFAULT 0,
-    work_order TEXT DEFAULT '',
-    job_description TEXT DEFAULT '',
-    summary TEXT DEFAULT ''
-  );
+const toDbEntry = ({
+  date,
+  worker,
+  customer = defaultCustomer,
+  property = '',
+  serviceName = '',
+  hours = 0,
+  entryType = 'hourly',
+  rate = entryType === 'flat' ? 150 : 30,
+  amount,
+  workOrder = '',
+  jobDescription = '',
+  summary = '',
+}) => {
+  const numericHours = Number(hours || 0)
+  const numericRate = Number(rate || 0)
+  const numericAmount = Number(amount || (entryType === 'flat' ? numericRate : numericHours * numericRate))
 
-  CREATE TABLE IF NOT EXISTS monthly_reports (
-    month TEXT PRIMARY KEY,
-    invoice_name TEXT DEFAULT '',
-    invoice_number TEXT DEFAULT '',
-    billing_date TEXT DEFAULT '',
-    finalized_at TEXT DEFAULT '',
-    pdf_path TEXT DEFAULT '',
-    status TEXT DEFAULT 'open'
-  )
-`)
-
-const ensureColumn = (name, definition) => {
-  const columns = db.prepare(`PRAGMA table_info(entries)`).all().map((col) => col.name)
-  if (!columns.includes(name)) {
-    db.exec(`ALTER TABLE entries ADD COLUMN ${definition}`)
+  return {
+    date,
+    worker,
+    customer: (customer || defaultCustomer).trim(),
+    property: (property || '').trim(),
+    service_name: (serviceName || '').trim(),
+    hours: entryType === 'flat' ? 0 : numericHours,
+    entry_type: entryType,
+    rate: numericRate,
+    amount: numericAmount,
+    work_order: (workOrder || '').trim(),
+    job_description: (jobDescription || '').trim(),
+    summary: (summary || '').trim(),
   }
 }
 
-ensureColumn('customer', "customer TEXT DEFAULT ''")
-ensureColumn('property', "property TEXT DEFAULT ''")
-ensureColumn('service_name', "service_name TEXT DEFAULT ''")
-ensureColumn('entry_type', "entry_type TEXT NOT NULL DEFAULT 'hourly'")
-ensureColumn('rate', 'rate REAL NOT NULL DEFAULT 30')
-ensureColumn('amount', 'amount REAL NOT NULL DEFAULT 0')
+const serializeEntry = (row) => ({
+  id: row.id,
+  date: row.date,
+  worker: row.worker,
+  customer: row.customer,
+  property: row.property,
+  serviceName: row.service_name,
+  hours: row.hours,
+  entryType: row.entry_type,
+  rate: row.rate,
+  amount: row.amount,
+  workOrder: row.work_order,
+  jobDescription: row.job_description,
+  summary: row.summary,
+})
 
-db.prepare("UPDATE entries SET amount = CASE WHEN amount = 0 THEN hours * COALESCE(rate, 30) ELSE amount END").run()
+const normalizeMonthlyReport = (row, month) => row || { month, invoice_name: '', invoice_number: '', billing_date: '', finalized_at: '', pdf_path: '', status: 'open' }
 
-db.prepare("UPDATE entries SET entry_type = 'hourly' WHERE entry_type IS NULL OR entry_type = ''").run()
+const listEntries = async (month) => {
+  let query = supabase.from('entries').select('*').order('date', { ascending: true }).order('id', { ascending: false })
+  if (month) {
+    query = query.gte('date', `${month}-01`).lt('date', `${month}-32`)
+  }
+  const { data, error } = await query
+  if (error) throw error
+  return data || []
+}
 
-db.prepare("UPDATE entries SET rate = 30 WHERE rate IS NULL OR rate = 0").run()
+const insertEntry = async (payload) => {
+  const { data, error } = await supabase.from('entries').insert(toDbEntry(payload)).select().single()
+  if (error) throw error
+  return data
+}
 
+const updateEntryById = async (id, payload) => {
+  const { data, error } = await supabase.from('entries').update(toDbEntry(payload)).eq('id', id).select().maybeSingle()
+  if (error) throw error
+  return data
+}
+
+const deleteEntryById = async (id) => {
+  const { error, count } = await supabase.from('entries').delete({ count: 'exact' }).eq('id', id)
+  if (error) throw error
+  return count || 0
+}
+
+const insertMassEntries = async (items) => {
+  if (!items.length) return []
+  const payload = items.map((item) => toDbEntry(item))
+  const { data, error } = await supabase.from('entries').insert(payload).select()
+  if (error) throw error
+  return data || []
+}
+
+const getMonthlyReport = async (month) => {
+  const { data, error } = await supabase.from('monthly_reports').select('*').eq('month', month).maybeSingle()
+  if (error) throw error
+  return normalizeMonthlyReport(data, month)
+}
+
+const saveMonthlyReport = async (month, payload) => {
+  const row = {
+    month,
+    invoice_name: payload.invoiceName || '',
+    invoice_number: payload.invoiceNumber || '',
+    billing_date: payload.billingDate || '',
+    finalized_at: payload.finalizedAt || '',
+    pdf_path: payload.pdfPath || '',
+    status: payload.status || 'open',
+  }
+  const { data, error } = await supabase.from('monthly_reports').upsert(row).select().single()
+  if (error) throw error
+  return data
+}
 
 app.use(cors())
 app.use(express.json())
-
-const isSupabaseConfigured = Boolean(supabase)
 
 const getBearerToken = (authHeader = '') => {
   const match = authHeader.match(/^Bearer\s+(.+)$/i)
@@ -98,22 +157,6 @@ const requireAuth = async (req, res, next) => {
   req.user = data.user
   return next()
 }
-
-const serializeEntry = (row) => ({
-  id: row.id,
-  date: row.date,
-  worker: row.worker,
-  customer: row.customer,
-  property: row.property,
-  serviceName: row.service_name,
-  hours: row.hours,
-  entryType: row.entry_type,
-  rate: row.rate,
-  amount: row.amount,
-  workOrder: row.work_order,
-  jobDescription: row.job_description,
-  summary: row.summary,
-})
 
 const normalizeDateToken = (raw) => {
   if (!raw) return null
@@ -543,17 +586,17 @@ app.get('/api/meta', requireAuth, (req, res) => {
   res.json({ workers, recordsFolder, authRequired: isSupabaseConfigured, user: req.user ? { id: req.user.id, email: req.user.email } : null })
 })
 
-app.get('/api/entries', requireAuth, (req, res) => {
-  const month = req.query.month
-  const rows = month
-    ? db
-        .prepare('SELECT * FROM entries WHERE date LIKE ? ORDER BY date ASC, id DESC')
-        .all(`${month}%`)
-    : db.prepare('SELECT * FROM entries ORDER BY date ASC, id DESC').all()
-  res.json(rows.map(serializeEntry))
+app.get('/api/entries', requireAuth, async (req, res) => {
+  try {
+    const rows = await listEntries(req.query.month)
+    res.json(rows.map(serializeEntry))
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: 'Failed to load entries' })
+  }
 })
 
-app.post('/api/entries', requireAuth, (req, res) => {
+app.post('/api/entries', requireAuth, async (req, res) => {
   const {
     date,
     worker,
@@ -572,35 +615,16 @@ app.post('/api/entries', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'date and worker are required' })
   }
 
-  const numericHours = Number(hours || 0)
-  const numericRate = Number(rate || 0)
-  const numericAmount = Number(amount || (entryType === 'flat' ? numericRate : numericHours * numericRate))
-
-  const result = db
-    .prepare(
-      `INSERT INTO entries (date, worker, customer, property, service_name, hours, entry_type, rate, amount, work_order, job_description, summary)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      date,
-      worker,
-      (customer || defaultCustomer).trim(),
-      property.trim(),
-      serviceName.trim(),
-      numericHours,
-      entryType,
-      numericRate,
-      numericAmount,
-      workOrder.trim(),
-      jobDescription.trim(),
-      summary.trim(),
-    )
-
-  const row = db.prepare('SELECT * FROM entries WHERE id = ?').get(result.lastInsertRowid)
-  return res.status(201).json(serializeEntry(row))
+  try {
+    const row = await insertEntry({ date, worker, customer, property, serviceName, hours, entryType, rate, amount, workOrder, jobDescription, summary })
+    return res.status(201).json(serializeEntry(row))
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to save entry' })
+  }
 })
 
-app.put('/api/entries/:id', requireAuth, (req, res) => {
+app.put('/api/entries/:id', requireAuth, async (req, res) => {
   const {
     date,
     worker,
@@ -615,46 +639,29 @@ app.put('/api/entries/:id', requireAuth, (req, res) => {
     jobDescription = '',
     summary = '',
   } = req.body
-  const numericHours = Number(hours || 0)
-  const numericRate = Number(rate || 0)
-  const numericAmount = Number(amount || (entryType === 'flat' ? numericRate : numericHours * numericRate))
-
-  const result = db
-    .prepare(
-      `UPDATE entries
-       SET date = ?, worker = ?, customer = ?, property = ?, service_name = ?, hours = ?, entry_type = ?, rate = ?, amount = ?, work_order = ?, job_description = ?, summary = ?
-       WHERE id = ?`,
-    )
-    .run(
-      date,
-      worker,
-      (customer || defaultCustomer).trim(),
-      property.trim(),
-      serviceName.trim(),
-      numericHours,
-      entryType,
-      numericRate,
-      numericAmount,
-      workOrder.trim(),
-      jobDescription.trim(),
-      summary.trim(),
-      req.params.id,
-    )
-
-  if (result.changes === 0) {
-    return res.status(404).json({ error: 'Entry not found' })
+  try {
+    const row = await updateEntryById(req.params.id, { date, worker, customer, property, serviceName, hours, entryType, rate, amount, workOrder, jobDescription, summary })
+    if (!row) {
+      return res.status(404).json({ error: 'Entry not found' })
+    }
+    return res.json(serializeEntry(row))
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to update entry' })
   }
-
-  const row = db.prepare('SELECT * FROM entries WHERE id = ?').get(req.params.id)
-  return res.json(serializeEntry(row))
 })
 
-app.delete('/api/entries/:id', requireAuth, (req, res) => {
-  const result = db.prepare('DELETE FROM entries WHERE id = ?').run(req.params.id)
-  if (result.changes === 0) {
-    return res.status(404).json({ error: 'Entry not found' })
+app.delete('/api/entries/:id', requireAuth, async (req, res) => {
+  try {
+    const deleted = await deleteEntryById(req.params.id)
+    if (!deleted) {
+      return res.status(404).json({ error: 'Entry not found' })
+    }
+    return res.status(204).send()
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to delete entry' })
   }
-  return res.status(204).send()
 })
 
 app.post('/api/parse-entry', requireAuth, (req, res) => {
@@ -665,34 +672,6 @@ app.post('/api/parse-entry', requireAuth, (req, res) => {
   return res.json(parsed)
 })
 
-const insertMassEntries = (items) => {
-  const insert = db.prepare(
-    `INSERT INTO entries (date, worker, customer, property, service_name, hours, entry_type, rate, amount, work_order, job_description, summary)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-
-  const transaction = db.transaction((rows) => {
-    for (const item of rows) {
-      insert.run(
-        item.date,
-        item.worker,
-        (item.customer || defaultCustomer).trim(),
-        item.property.trim(),
-        item.serviceName.trim(),
-        Number(item.hours || 0),
-        item.entryType,
-        Number(item.rate || 0),
-        Number(item.amount || 0),
-        item.workOrder.trim(),
-        item.jobDescription.trim(),
-        item.summary.trim(),
-      )
-    }
-  })
-
-  transaction(items)
-}
-
 app.post('/api/mass-entry/preview', requireAuth, (req, res) => {
   const result = allocateMassEntry(req.body)
   if (result.error) {
@@ -701,14 +680,19 @@ app.post('/api/mass-entry/preview', requireAuth, (req, res) => {
   return res.json(result)
 })
 
-app.post('/api/mass-entry/save', requireAuth, (req, res) => {
+app.post('/api/mass-entry/save', requireAuth, async (req, res) => {
   const result = allocateMassEntry(req.body)
   if (result.error) {
     return res.status(400).json({ error: result.error })
   }
 
-  insertMassEntries(result.entries)
-  return res.status(201).json({ ok: true, count: result.entries.length, entries: result.entries })
+  try {
+    await insertMassEntries(result.entries)
+    return res.status(201).json({ ok: true, count: result.entries.length, entries: result.entries })
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to save mass entry batch' })
+  }
 })
 
 app.post('/api/mass-entry/mixed/preview', requireAuth, (req, res) => {
@@ -719,7 +703,7 @@ app.post('/api/mass-entry/mixed/preview', requireAuth, (req, res) => {
   return res.json(result)
 })
 
-app.post('/api/mass-entry/mixed/save', requireAuth, (req, res) => {
+app.post('/api/mass-entry/mixed/save', requireAuth, async (req, res) => {
   const result = parseMixedMassEntryLines(req.body)
   if (result.error) {
     return res.status(400).json({ error: result.error })
@@ -729,40 +713,33 @@ app.post('/api/mass-entry/mixed/save', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Fix the highlighted mixed-line errors before saving.', warnings: result.warnings, entries: result.entries, linesParsed: result.linesParsed })
   }
 
-  insertMassEntries(result.entries)
-  return res.status(201).json({ ok: true, count: result.entries.length, linesParsed: result.linesParsed, warnings: result.warnings, entries: result.entries })
-})
-
-const ensureMonthlyReportColumn = (name, definition) => {
-  const columns = db.prepare(`PRAGMA table_info(monthly_reports)`).all().map((col) => col.name)
-  if (!columns.includes(name)) {
-    db.exec(`ALTER TABLE monthly_reports ADD COLUMN ${definition}`)
+  try {
+    await insertMassEntries(result.entries)
+    return res.status(201).json({ ok: true, count: result.entries.length, linesParsed: result.linesParsed, warnings: result.warnings, entries: result.entries })
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to save mixed mass entry batch' })
   }
-}
-
-ensureMonthlyReportColumn('status', "status TEXT DEFAULT 'open'")
-
-app.get('/api/monthly-report/:month', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT * FROM monthly_reports WHERE month = ?').get(req.params.month)
-  return res.json(row || { month: req.params.month, invoice_name: '', invoice_number: '', billing_date: '', finalized_at: '', pdf_path: '', status: 'open' })
 })
 
-app.post('/api/monthly-report/:month', requireAuth, (req, res) => {
-  const { invoiceName = '', invoiceNumber = '', billingDate = '', finalizedAt = '', pdfPath = '', status = 'open' } = req.body
-  db.prepare(
-    `INSERT INTO monthly_reports (month, invoice_name, invoice_number, billing_date, finalized_at, pdf_path, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(month) DO UPDATE SET
-       invoice_name = excluded.invoice_name,
-       invoice_number = excluded.invoice_number,
-       billing_date = excluded.billing_date,
-       finalized_at = excluded.finalized_at,
-       pdf_path = excluded.pdf_path,
-       status = excluded.status`
-  ).run(req.params.month, invoiceName, invoiceNumber, billingDate, finalizedAt, pdfPath, status)
+app.get('/api/monthly-report/:month', requireAuth, async (req, res) => {
+  try {
+    const row = await getMonthlyReport(req.params.month)
+    return res.json(row)
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to load monthly report' })
+  }
+})
 
-  const row = db.prepare('SELECT * FROM monthly_reports WHERE month = ?').get(req.params.month)
-  return res.json(row)
+app.post('/api/monthly-report/:month', requireAuth, async (req, res) => {
+  try {
+    const row = await saveMonthlyReport(req.params.month, req.body)
+    return res.json(row)
+  } catch (error) {
+    console.error(error)
+    return res.status(500).json({ error: 'Failed to save monthly report' })
+  }
 })
 
 app.post('/api/save-pdf', requireAuth, (req, res) => {
