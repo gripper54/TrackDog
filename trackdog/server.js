@@ -14,6 +14,7 @@ const recordsFolder = process.env.TRACKDOG_RECORDS_FOLDER || '/Users/crimmit/Lib
 const supabaseUrl = process.env.VITE_SUPABASE_URL
 const supabasePublishableKey = process.env.VITE_SUPABASE_ANON_KEY
 const supabase = supabaseUrl && supabasePublishableKey ? createClient(supabaseUrl, supabasePublishableKey) : null
+const isSupabaseConfigured = Boolean(supabase)
 if (!supabase) {
   throw new Error('Supabase is required for the Trackdog API in hosted mode. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
 }
