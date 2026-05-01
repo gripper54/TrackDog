@@ -798,7 +798,8 @@ function App() {
     })
 
     if (!saveResponse.ok) {
-      setStatus('Parsed entry worked, but save failed.')
+      const result = await saveResponse.json().catch(() => ({}))
+      setStatus(result.error || 'Parsed entry worked, but save failed.')
       return
     }
 
