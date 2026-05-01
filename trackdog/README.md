@@ -92,6 +92,14 @@ Minimum hosted env vars:
 - `TRACKDOG_RECORDS_FOLDER` if PDF saving remains filesystem-based on the backend host
 - `PORT` for non-serverless backend hosting
 
+## Vercel frontend readiness
+The frontend now builds cleanly for Vercel, but it needs these Vercel project env vars set:
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_API_BASE_URL` set to the full deployed backend URL, not `/api`
+
+If `VITE_API_BASE_URL` is missing in a hosted environment, the UI now shows a clear configuration error instead of silently failing.
+
 ## Next implementation phases
 1. choose deployment shape: Vercel frontend + separate API host, or full migration first
 2. SQLite to Supabase/Postgres migration

@@ -9,6 +9,9 @@ const fallbackWorkers = ['Mark Griffin', 'Mike Griffin']
 const dropboxFolder = import.meta.env.VITE_TRACKDOG_RECORDS_FOLDER || 'Trackdog Records'
 const hourlyRate = 30
 const defaultCustomer = 'White Oaks / Prime Properties'
+const isHostedFrontend = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+const isUsingRelativeApiBase = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL === '/api'
+const needsHostedApiConfig = isHostedFrontend && isUsingRelativeApiBase
 
 const servicePresets = {
   hourly: { serviceName: 'Hourly Labor', entryType: 'hourly', rate: 30, amount: 0 },
@@ -112,6 +115,9 @@ function App() {
   const [session, setSession] = useState(null)
   const [authForm, setAuthForm] = useState({ email: '', password: '' })
   const [authError, setAuthError] = useState('')
+  const apiConfigError = needsHostedApiConfig
+    ? 'Trackdog frontend is deployed, but no hosted API base URL is configured yet. Set VITE_API_BASE_URL in Vercel to your deployed backend URL.'
+    : ''
 
   const getAuthHeaders = useCallback(async () => {
     if (!isSupabaseConfigured || !session?.access_token) {
@@ -183,7 +189,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (isSupabaseConfigured && !session) {
+    if (needsHostedApiConfig || (isSupabaseConfigured && !session)) {
       return
     }
 
@@ -209,7 +215,11 @@ function App() {
         })
         setStatus(`Trackdog database connected. Records folder configured as ${meta.recordsFolder || dropboxFolder}.`)
       } catch {
-        setStatus('Could not reach the Trackdog API. Check your API base URL and backend server.')
+        setStatus(
+          isHostedFrontend
+            ? 'Could not reach the hosted Trackdog API. Check VITE_API_BASE_URL and make sure the backend is deployed.'
+            : 'Could not reach the Trackdog API. Check your API base URL and backend server.',
+        )
       }
     }
 
@@ -1793,6 +1803,7 @@ function App() {
           <p className="section-kicker">Trackdog access</p>
           <h1>Sign in to Trackdog</h1>
           <p className="hero-copy auth-copy">This app is private. Only invited users can access Trackdog.</p>
+          {apiConfigError ? <p className="auth-error">{apiConfigError}</p> : null}
           <label>
             Email
             <input type="email" name="email" value={authForm.email} onChange={handleAuthInputChange} autoComplete="email" required />
@@ -1802,7 +1813,7 @@ function App() {
             <input type="password" name="password" value={authForm.password} onChange={handleAuthInputChange} autoComplete="current-password" required />
           </label>
           {authError ? <p className="auth-error">{authError}</p> : null}
-          <button type="submit">Sign in</button>
+          <button type="submit" disabled={Boolean(apiConfigError)}>Sign in</button>
         </form>
       </div>
     )
@@ -1833,7 +1844,8 @@ function App() {
                 <p className="hero-copy">
                   Trackdog keeps White Oaks field work clean, billable, and easy to prove, with faster entry, clearer month totals, and better-looking support reports.
                 </p>
-                <p className="status-text">{status}</p>
+                <p className="status-text">{apiConfigError || status}</p>
+                {apiConfigError ? <p className="auth-error">{apiConfigError}</p> : null}
               </div>
             </div>
           </div>
