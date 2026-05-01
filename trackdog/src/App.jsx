@@ -333,7 +333,7 @@ function App() {
     const method = form.id ? 'PUT' : 'POST'
     const url = form.id ? `${apiBase}/entries/${form.id}` : `${apiBase}/entries`
 
-    const response = await fetch(url, {
+    const response = await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
