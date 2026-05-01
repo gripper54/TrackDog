@@ -303,51 +303,56 @@ function App() {
   const handleSave = async (event) => {
     event.preventDefault()
 
-    const parsedHours = Number(form.hours)
-    if (!form.date || !form.worker || !parsedHours || parsedHours <= 0) {
-      setStatus('Date, worker, and hours are required.')
-      return
+    try {
+      const parsedHours = Number(form.hours)
+      if (!form.date || !form.worker || !parsedHours || parsedHours <= 0) {
+        setStatus('Date, worker, and hours are required.')
+        return
+      }
+
+      const numericRate = Number(form.rate || (form.entryType === 'flat' ? 150 : hourlyRate))
+      const numericAmount =
+        form.entryType === 'flat'
+          ? Number(form.amount || numericRate)
+          : parsedHours * numericRate
+
+      const payload = {
+        date: form.date,
+        worker: form.worker,
+        customer: form.customer || defaultCustomer,
+        property: form.property,
+        serviceName: form.serviceName,
+        entryType: form.entryType,
+        hours: form.entryType === 'flat' ? 0 : parsedHours,
+        rate: numericRate,
+        amount: numericAmount,
+        workOrder: form.workOrder,
+        jobDescription: form.jobDescription,
+        summary: form.summary,
+      }
+
+      const method = form.id ? 'PUT' : 'POST'
+      const url = form.id ? `${apiBase}/entries/${form.id}` : `${apiBase}/entries`
+
+      const response = await apiFetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}))
+        setStatus(result.error || 'Could not save entry.')
+        return
+      }
+
+      await loadEntries(form.date.slice(0, 7))
+      setSelectedMonth(form.date.slice(0, 7))
+      setStatus(form.id ? 'Entry updated in Trackdog database.' : 'Entry saved to Trackdog database.')
+      resetForm()
+    } catch (error) {
+      setStatus(error?.message || 'Could not save entry.')
     }
-
-    const numericRate = Number(form.rate || (form.entryType === 'flat' ? 150 : hourlyRate))
-    const numericAmount =
-      form.entryType === 'flat'
-        ? Number(form.amount || numericRate)
-        : parsedHours * numericRate
-
-    const payload = {
-      date: form.date,
-      worker: form.worker,
-      customer: form.customer || defaultCustomer,
-      property: form.property,
-      serviceName: form.serviceName,
-      entryType: form.entryType,
-      hours: form.entryType === 'flat' ? 0 : parsedHours,
-      rate: numericRate,
-      amount: numericAmount,
-      workOrder: form.workOrder,
-      jobDescription: form.jobDescription,
-      summary: form.summary,
-    }
-
-    const method = form.id ? 'PUT' : 'POST'
-    const url = form.id ? `${apiBase}/entries/${form.id}` : `${apiBase}/entries`
-
-    const response = await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-
-    if (!response.ok) {
-      setStatus('Could not save entry.')
-      return
-    }
-
-    await loadEntries(form.date.slice(0, 7))
-    setSelectedMonth(form.date.slice(0, 7))
-    setStatus(form.id ? 'Entry updated in Trackdog database.' : 'Entry saved to Trackdog database.')
-    resetForm()
   }
 
   const handleEdit = (entry) => {
